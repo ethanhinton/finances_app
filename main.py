@@ -83,6 +83,39 @@ else:
         print('Monzo Server Error')
         exit(1)
 
+merchant_fields = {
+    "MerchantID":[],
+    "GroupID":[],
+    "MerchantName":[],
+    "IsOnline":[],
+    "Longitude":[],
+    "Latitude":[],
+    "IsATM":[]
+}
+transaction_fields = {
+    "Date":[],
+    "GBPAmount":[],
+    "AccountID":[],
+    "MerchantID":[],
+    "LocalAmount":[],
+    "LocalCurrency":[],
+    "Category":[],
+    "Categories":[],
+    "IsTransfer":[],
+    "Description":[]
+}
+
+account_fields = {
+    "AccountID":[],
+    "AccountName":[]
+}
+
+balance_fields = {
+    "AccountID":[],
+    "Date":[],
+    "Balance":[]
+}
+
 
 accounts = get_accounts(monzo)
 
@@ -92,11 +125,8 @@ for account in accounts:
     print(account.balance.total_balance)
     print("TRANSACTIONS\n")
 
-    transactions = Transaction.fetch(monzo, account_id=account.account_id, since=datetime.strptime("2020-01-01", "%Y-%m-%d"))
+    transactions = Transaction.fetch(monzo, account_id=account.account_id, since=datetime.strptime("2023-01-01", "%Y-%m-%d"), expand=["merchant"])
 
-    transactions_list = list(map(lambda x: (x.amount, x.created, x.description, x.decline_reason, x.category), transactions))
+    transactions_list = list(map(lambda x: (x.amount, x.created, x.description, x.decline_reason, x.category, x.merchant), transactions))
 
-    with open("transactions.txt", "a+") as f:
-        for transaction in transactions:
-            f.write(f"AMOUNT : {transaction.amount}\nDATE : {datetime.strftime(transaction.created, '%d-%m-%Y')}\n DESCRIPTION : {transaction.description}\nCATEGORY : {transaction.category}\nDECLINE REASON : {transaction.decline_reason}\n\n")
 
