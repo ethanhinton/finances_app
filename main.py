@@ -5,7 +5,10 @@ from monzo.handlers.storage import Storage
 from monzo.exceptions import MonzoAuthenticationError, MonzoServerError
 from monzo.endpoints.account import Account
 from monzo.endpoints.transaction import Transaction
+from monzo.endpoints.pot import Pot
 from datetime import datetime
+import pandas as pd
+from IPython.display import display
 
 class EnvWriter(Storage):
 
@@ -28,10 +31,6 @@ def url_to_auth_code(url):
     token = url_split[0][29:]
     state = url_split[1][6:]
     return token, state
-
-def get_accounts(monzo):
-    accounts = Account.fetch(monzo)
-    return accounts
 
 dotenv_file = dotenv.find_dotenv()
 dotenv.load_dotenv(dotenv_file)
@@ -90,9 +89,16 @@ merchant_fields = {
     "IsOnline":[],
     "Longitude":[],
     "Latitude":[],
-    "IsATM":[]
+    "City":[],
+    "Region":[],
+    "Country":[],
+    "Category":[],
+    "IsATM":[],
+    "Logo":[]
 }
+
 transaction_fields = {
+    "TransactionID":[],
     "Date":[],
     "GBPAmount":[],
     "AccountID":[],
@@ -107,26 +113,125 @@ transaction_fields = {
 
 account_fields = {
     "AccountID":[],
-    "AccountName":[]
+    "AccountType":[],
+    "Description":[]
+}
+
+pot_fields = {
+    "PotID":[],
+    "AccountID":[],
+    "PotName":[],
+    "PotCurrency":[],
+    "Deleted":[]
 }
 
 balance_fields = {
-    "AccountID":[],
+    "Account/PotID":[],
     "Date":[],
-    "Balance":[]
+    "Balance":[],
+    "Currency":[]
 }
 
+# Set time of update
+update_time = datetime.now().strftime("%Y/%m/%d %H:%M")
 
-accounts = get_accounts(monzo)
+# Fetch list of account objects
+accounts = Account.fetch(monzo)
 
+# Loop through accounts and populate information
 for account in accounts:
-    print(account.account_id)
     print(account.account_type())
-    print(account.balance.total_balance)
-    print("TRANSACTIONS\n")
+    
+    # Populate account fields
+    account_fields["AccountID"].append(account.account_id)
+    account_fields["AccountType"].append(account.account_type())
+    account_fields["Description"].append(account.description)
 
+    # Populate balance fields for account
+    balance_fields["Account/PotID"].append(account.account_id)
+    balance_fields["Date"].append(update_time)
+    balance_fields["Balance"].append(account.balance.balance)
+    balance_fields["Currency"].append(account.balance.currency)
+
+    # Fetch list of transactions and pots for the account
     transactions = Transaction.fetch(monzo, account_id=account.account_id, since=datetime.strptime("2023-01-01", "%Y-%m-%d"), expand=["merchant"])
+    pots = Pot.fetch(monzo, account_id=account.account_id)
 
-    transactions_list = list(map(lambda x: (x.amount, x.created, x.description, x.decline_reason, x.category, x.merchant), transactions))
+    for transaction in transactions:
+        # Populate transaction fields
+        transaction_fields["TransactionID"].append(transaction.transaction_id)
+        transaction_fields["Date"].append(transaction.created)
+        transaction_fields["GBPAmount"].append(transaction.amount)
+        transaction_fields["AccountID"].append(transaction.account_id)
+        transaction_fields["MerchantID"].append((transaction.merchant["id"] if transaction.merchant else None))
+        transaction_fields["LocalAmount"].append(transaction.local_amount)
+        transaction_fields["LocalCurrency"].append(transaction.local_currency)
+        transaction_fields["Category"].append(transaction.category)
+        transaction_fields["Categories"].append(transaction.categories)
+        transaction_fields["IsTransfer"].append(transaction.is_load)
+        transaction_fields["Description"].append(transaction.description)
+
+        # Populate merchant fields if there is a merchant
+        if transaction.merchant:
+            merchant = transaction.merchant
+
+            merchant_fields["MerchantID"].append(merchant["id"])
+            merchant_fields["GroupID"].append(merchant["group_id"])
+            merchant_fields["MerchantName"].append(merchant["name"])
+            merchant_fields["Category"].append(merchant["category"])
+            merchant_fields["IsOnline"].append(merchant["online"])
+            merchant_fields["Longitude"].append(merchant["address"]["longitude"])
+            merchant_fields["Latitude"].append(merchant["address"]["latitude"])
+            merchant_fields["City"].append(merchant["address"]["city"])
+            merchant_fields["Region"].append(merchant["address"]["region"])
+            merchant_fields["Country"].append(merchant["address"]["country"])
+            merchant_fields["IsATM"].append(merchant["atm"])
+            merchant_fields["Logo"].append(merchant["logo"])
+
+    # Populate pot info for each pot in the account
+    for pot in pots:
+        pot_fields["PotID"].append(pot.pot_id)
+        pot_fields["AccountID"].append(account.account_id)
+        pot_fields["PotName"].append(pot.name)
+        pot_fields["PotCurrency"].append(pot.currency)
+        pot_fields["Deleted"].append(pot.deleted)
+
+        # Populate balance fields for pot
+        balance_fields["Account/PotID"].append(pot.pot_id)
+        balance_fields["Date"].append(update_time)
+        balance_fields["Balance"].append(pot.balance)
+        balance_fields["Currency"].append(pot.currency)
 
 
+# Create dataframes
+df_accounts = pd.DataFrame(data=account_fields)
+df_pots = pd.DataFrame(data=pot_fields)
+df_transactions = pd.DataFrame(data=transaction_fields)
+df_merchants = pd.DataFrame(data=merchant_fields)
+df_balances = pd.DataFrame(data=balance_fields)
+
+df_transactions["PotID"] = df_transactions.Description.apply(lambda x: x if x[:4] == "pot_" else None)
+df_merchants = df_merchants.drop_duplicates(["MerchantID"], keep="last")
+
+display(df_accounts)
+display(df_accounts.dtypes)
+print("")
+display(df_pots)
+display(df_pots.dtypes)
+print("")
+display(df_transactions)
+display(df_transactions.dtypes)
+print("")
+display(df_merchants)
+display(df_merchants.dtypes)
+print("")
+display(df_balances)
+display(df_balances.dtypes)
+print("")
+
+# Write to csv files
+df_accounts.to_csv("accounts.csv", index=False)
+df_pots.to_csv("pots.csv", index=False)
+df_transactions.to_csv("transactions.csv", index=False)
+df_merchants.to_csv("merchants.csv", index=False)
+df_balances.to_csv("balances.csv", index=False)
