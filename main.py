@@ -211,23 +211,27 @@ df_merchants = pd.DataFrame(data=merchant_fields)
 df_balances = pd.DataFrame(data=balance_fields)
 
 df_transactions["PotID"] = df_transactions.Description.apply(lambda x: x if x[:4] == "pot_" else None)
+df_transactions["GBPAmount"] = df_transactions["GBPAmount"] / 100
+df_transactions["LocalAmount"] = df_transactions["LocalAmount"] / 100
+df_balances["Balance"] = df_balances["Balance"] / 100
 df_merchants = df_merchants.drop_duplicates(["MerchantID"], keep="last")
 
-display(df_accounts)
-display(df_accounts.dtypes)
-print("")
-display(df_pots)
-display(df_pots.dtypes)
-print("")
-display(df_transactions)
-display(df_transactions.dtypes)
-print("")
-display(df_merchants)
-display(df_merchants.dtypes)
-print("")
-display(df_balances)
-display(df_balances.dtypes)
-print("")
+
+# display(df_accounts)
+# display(df_accounts.dtypes)
+# print("")
+# display(df_pots)
+# display(df_pots.dtypes)
+# print("")
+# display(df_transactions)
+# display(df_transactions.dtypes)
+# print("")
+# display(df_merchants)
+# display(df_merchants.dtypes)
+# print("")
+# display(df_balances)
+# display(df_balances.dtypes)
+# print("")
 
 # Write to csv files
 df_accounts.to_csv("accounts.csv", index=False)
