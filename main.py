@@ -9,6 +9,7 @@ from monzo.endpoints.pot import Pot
 from datetime import datetime
 import pandas as pd
 from IPython.display import display
+from functions import *
 
 class EnvWriter(Storage):
 
@@ -26,12 +27,6 @@ class EnvWriter(Storage):
         dotenv.set_key(dotenv_file, "REFRESH_TOKEN", os.environ["REFRESH_TOKEN"])
 
 
-def url_to_auth_code(url):
-    url_split = url.split("&")
-    token = url_split[0][29:]
-    state = url_split[1][6:]
-    return token, state
-
 dotenv_file = dotenv.find_dotenv()
 dotenv.load_dotenv(dotenv_file)
 
@@ -41,6 +36,16 @@ redirect_uri = 'http://127.0.0.1/monzo'  # URL requests via Monzo will be redire
 access_token = os.getenv("ACCESS_TOKEN")
 expiry = os.getenv("EXPIRY")
 refresh_token = os.getenv("REFRESH_TOKEN")
+
+DATABASE = False
+
+if DATABASE:
+    # Enter database info
+    pass
+else:
+    # Set file type and folder name
+    FOLDER_PATH = "files"
+    FILE_TYPE = "csv"
 
 # If we have the access token already, then setup auth object. If not, then get access token prior to this 
 if os.getenv("ACCESS_TOKEN"):
@@ -95,6 +100,11 @@ merchant_fields = {
     "Category":[],
     "IsATM":[],
     "Logo":[]
+}
+
+group_fields = {
+    "GroupID":[],
+    "MerchantGroupName":[]
 }
 
 transaction_fields = {
@@ -188,6 +198,9 @@ for account in accounts:
             merchant_fields["IsATM"].append(merchant["atm"])
             merchant_fields["Logo"].append(merchant["logo"])
 
+            group_fields["GroupID"].append(merchant["group_id"])
+            group_fields["MerchantGroupName"].append(merchant["name"])
+
     # Populate pot info for each pot in the account
     for pot in pots:
         pot_fields["PotID"].append(pot.pot_id)
@@ -209,33 +222,37 @@ df_pots = pd.DataFrame(data=pot_fields)
 df_transactions = pd.DataFrame(data=transaction_fields)
 df_merchants = pd.DataFrame(data=merchant_fields)
 df_balances = pd.DataFrame(data=balance_fields)
+df_groups = pd.DataFrame(data=group_fields)
 
 df_transactions["PotID"] = df_transactions.Description.apply(lambda x: x if x[:4] == "pot_" else None)
 df_transactions["GBPAmount"] = df_transactions["GBPAmount"] / 100
 df_transactions["LocalAmount"] = df_transactions["LocalAmount"] / 100
 df_balances["Balance"] = df_balances["Balance"] / 100
 df_merchants = df_merchants.drop_duplicates(["MerchantID"], keep="last")
+df_groups = df_groups.drop_duplicates(["group_id"], keep="last")
 
+# File paths
+accounts_path = os.path.join(FOLDER_PATH, "accounts")
+groups_path = os.path.join(FOLDER_PATH, "groups")
+merchants_path = os.path.join(FOLDER_PATH, "merchants")
+transactions_path = os.path.join(FOLDER_PATH, "transactions")
+pots_path = os.path.join(FOLDER_PATH, "pots")
+balances_path = os.path.join(FOLDER_PATH, "balances")
 
-# display(df_accounts)
-# display(df_accounts.dtypes)
-# print("")
-# display(df_pots)
-# display(df_pots.dtypes)
-# print("")
-# display(df_transactions)
-# display(df_transactions.dtypes)
-# print("")
-# display(df_merchants)
-# display(df_merchants.dtypes)
-# print("")
-# display(df_balances)
-# display(df_balances.dtypes)
-# print("")
+# Load in existing dataframes
+df_accounts_old = dataframe_from_file(accounts_path, format=FILE_TYPE)
+df_groups_old = dataframe_from_file(groups_path, format=FILE_TYPE)
+df_merchants_old = dataframe_from_file(merchants_path, format=FILE_TYPE)
+df_transactions_old = dataframe_from_file(transactions_path, format=FILE_TYPE)
+df_pots_old = dataframe_from_file(pots_path, format=FILE_TYPE)
+df_balances_old = dataframe_from_file(balances_path, format=FILE_TYPE)
 
-# Write to csv files
-df_accounts.to_csv("accounts.csv", index=False)
-df_pots.to_csv("pots.csv", index=False)
-df_transactions.to_csv("transactions.csv", index=False)
-df_merchants.to_csv("merchants.csv", index=False)
-df_balances.to_csv("balances.csv", index=False)
+# Union new data to old data and drop duplicates
+df_accounts_union = union_dataframes(df_accounts_old, df_accounts, drop_duplicates=True, drop_duplicates_columns=["AccountID"])
+df_groups_union = union_dataframes(df_groups_old, df_groups, drop_duplicates=True, drop_duplicates_columns=["GroupID"])
+df_merchants_union = union_dataframes(df_merchants_old, df_merchants, drop_duplicates=True, drop_duplicates_columns=["MerchantID"])
+df_transactions_union = union_dataframes(df_transactions_old, df_transactions, drop_duplicates=True, drop_duplicates_columns=["TransactionID"])
+df_pots_union = union_dataframes(df_pots_old, df_pots, drop_duplicates=True, drop_duplicates_columns=["PotID"])
+df_balances_union = union_dataframes(df_balances_old, df_balances, drop_duplicates=True, drop_duplicates_columns=["Account/PotID", "Date"])
+
+# Write to files
