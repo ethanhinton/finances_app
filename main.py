@@ -8,7 +8,6 @@ from monzo.endpoints.transaction import Transaction
 from monzo.endpoints.pot import Pot
 from datetime import datetime
 import pandas as pd
-from IPython.display import display
 from functions import *
 
 class EnvWriter(Storage):
@@ -37,18 +36,33 @@ access_token = os.getenv("ACCESS_TOKEN")
 expiry = os.getenv("EXPIRY")
 refresh_token = os.getenv("REFRESH_TOKEN")
 
-DATABASE = False
+# Pick storage type between oracle and local
+STORAGE_TYPE = "oracle"
 
-if DATABASE:
-    # Enter database info
-    pass
+# Set oracle info from environment vars or set folder path if storing locally
+ORACLE_CONFIG_PATH = os.getenv("ORACLE_CONFIG_PATH")
+
+if STORAGE_TYPE == "oracle":
+    FOLDER = os.getenv("ORACLE_BUCKET_NAME")
 else:
-    # Set file type and folder name
-    FOLDER_PATH = "files"
-    FILE_TYPE = "csv"
+    FOLDER = None
+
+# Set file format
+FILE_TYPE = "csv"
+
+# Checks to make sure required variables are correct
+supported_storage_types = ["oracle", "local"]
+if STORAGE_TYPE not in supported_storage_types:
+    raise ValueError(f"Storage type assigned to STORAGE_TYPE variable is not supported. Please choose from {supported_storage_types}")
+if STORAGE_TYPE == "oracle":
+    if not ORACLE_CONFIG_PATH:
+        raise ValueError("Check that ORACLE_CONFIG_PATH is assigned or change STORAGE_TYPE")
+if STORAGE_TYPE == "local":
+    if not FOLDER:
+        raise ValueError("Assign a path to store files to the FOLDER variable or change STORAGE_TYPE")
 
 # If we have the access token already, then setup auth object. If not, then get access token prior to this 
-if os.getenv("ACCESS_TOKEN"):
+if access_token:
     monzo = Authentication(
         client_id=client_id, 
         client_secret=client_secret, 
@@ -118,7 +132,8 @@ transaction_fields = {
     "Category":[],
     "Categories":[],
     "IsTransfer":[],
-    "Description":[]
+    "Description":[],
+    "DeclineReason":[]
 }
 
 account_fields = {
@@ -150,6 +165,8 @@ accounts = Account.fetch(monzo)
 
 # Loop through accounts and populate information
 for account in accounts:
+    if (account_type := account.account_type()) not in ["Flex", "Current Account"]:
+        continue
     print(account.account_type())
     
     # Populate account fields
@@ -164,7 +181,7 @@ for account in accounts:
     balance_fields["Currency"].append(account.balance.currency)
 
     # Fetch list of transactions and pots for the account
-    transactions = Transaction.fetch(monzo, account_id=account.account_id, since=datetime.strptime("2023-01-01", "%Y-%m-%d"), expand=["merchant"])
+    transactions = Transaction.fetch(monzo, account_id=account.account_id, since=datetime.strptime("2023-02-01", "%Y-%m-%d"), expand=["merchant"])
     pots = Pot.fetch(monzo, account_id=account.account_id)
 
     for transaction in transactions:
@@ -180,6 +197,7 @@ for account in accounts:
         transaction_fields["Categories"].append(transaction.categories)
         transaction_fields["IsTransfer"].append(transaction.is_load)
         transaction_fields["Description"].append(transaction.description)
+        transaction_fields["DeclineReason"].append(transaction.decline_reason)        
 
         # Populate merchant fields if there is a merchant
         if transaction.merchant:
@@ -217,42 +235,41 @@ for account in accounts:
 
 
 # Create dataframes
-df_accounts = pd.DataFrame(data=account_fields)
-df_pots = pd.DataFrame(data=pot_fields)
-df_transactions = pd.DataFrame(data=transaction_fields)
-df_merchants = pd.DataFrame(data=merchant_fields)
-df_balances = pd.DataFrame(data=balance_fields)
-df_groups = pd.DataFrame(data=group_fields)
+dataframes = {
+    "accounts":pd.DataFrame(data=account_fields),
+    "pots":pd.DataFrame(data=pot_fields),
+    "transactions":pd.DataFrame(data=transaction_fields),
+    "merchants":pd.DataFrame(data=merchant_fields),
+    "balances":pd.DataFrame(data=balance_fields),
+    "groups":pd.DataFrame(data=group_fields)
+}
 
-df_transactions["PotID"] = df_transactions.Description.apply(lambda x: x if x[:4] == "pot_" else None)
-df_transactions["GBPAmount"] = df_transactions["GBPAmount"] / 100
-df_transactions["LocalAmount"] = df_transactions["LocalAmount"] / 100
-df_balances["Balance"] = df_balances["Balance"] / 100
-df_merchants = df_merchants.drop_duplicates(["MerchantID"], keep="last")
-df_groups = df_groups.drop_duplicates(["group_id"], keep="last")
+dataframes["transactions"]["PotID"] = dataframes["transactions"].Description.apply(lambda x: x if x[:4] == "pot_" else None)
+dataframes["transactions"]["GBPAmount"] = dataframes["transactions"]["GBPAmount"] / 100
+dataframes["transactions"]["LocalAmount"] = dataframes["transactions"]["LocalAmount"] / 100
+dataframes["balances"]["Balance"] = dataframes["balances"]["Balance"] / 100
+dataframes["merchants"] = dataframes["merchants"].drop_duplicates(["MerchantID"], keep="last")
+dataframes["groups"] = dataframes["groups"].drop_duplicates(["GroupID"], keep="last")
 
 # File paths
-accounts_path = os.path.join(FOLDER_PATH, "accounts")
-groups_path = os.path.join(FOLDER_PATH, "groups")
-merchants_path = os.path.join(FOLDER_PATH, "merchants")
-transactions_path = os.path.join(FOLDER_PATH, "transactions")
-pots_path = os.path.join(FOLDER_PATH, "pots")
-balances_path = os.path.join(FOLDER_PATH, "balances")
+paths = {key:create_path(key, STORAGE_TYPE, FOLDER) for key in dataframes.keys()}
 
 # Load in existing dataframes
-df_accounts_old = dataframe_from_file(accounts_path, format=FILE_TYPE)
-df_groups_old = dataframe_from_file(groups_path, format=FILE_TYPE)
-df_merchants_old = dataframe_from_file(merchants_path, format=FILE_TYPE)
-df_transactions_old = dataframe_from_file(transactions_path, format=FILE_TYPE)
-df_pots_old = dataframe_from_file(pots_path, format=FILE_TYPE)
-df_balances_old = dataframe_from_file(balances_path, format=FILE_TYPE)
+old_dataframes = {key:dataframe_from_file(paths[key], format=FILE_TYPE, storage_type=STORAGE_TYPE) for key in dataframes.keys()}
+
+# Set columns that need to have distinct values in the final dataframe
+unique_cols = {
+    "accounts":["AccountID"],
+    "groups":["GroupID"],
+    "merchants":["MerchantID"],
+    "transactions":["TransactionID"],
+    "pots":["PotID"],
+    "balances":["Account/PotID", "Date"]
+}
 
 # Union new data to old data and drop duplicates
-df_accounts_union = union_dataframes(df_accounts_old, df_accounts, drop_duplicates=True, drop_duplicates_columns=["AccountID"])
-df_groups_union = union_dataframes(df_groups_old, df_groups, drop_duplicates=True, drop_duplicates_columns=["GroupID"])
-df_merchants_union = union_dataframes(df_merchants_old, df_merchants, drop_duplicates=True, drop_duplicates_columns=["MerchantID"])
-df_transactions_union = union_dataframes(df_transactions_old, df_transactions, drop_duplicates=True, drop_duplicates_columns=["TransactionID"])
-df_pots_union = union_dataframes(df_pots_old, df_pots, drop_duplicates=True, drop_duplicates_columns=["PotID"])
-df_balances_union = union_dataframes(df_balances_old, df_balances, drop_duplicates=True, drop_duplicates_columns=["Account/PotID", "Date"])
+final_dataframes = {key:union_dataframes(old_dataframes[key], dataframes[key], drop_duplicates_columns=unique_cols[key]) for key in dataframes.keys()}
 
 # Write to files
+for name, df in final_dataframes.items():
+    dataframe_to_file(df, paths[name], format=FILE_TYPE, storage_type=STORAGE_TYPE)
